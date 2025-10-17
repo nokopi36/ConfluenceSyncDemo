@@ -13,6 +13,10 @@ confluence_title: "Github自動同期テスト"    # ページタイトル（オ
 
 同じドキュメントは更新か？
 
+![ローカル画像](./images/screenshot.png)
+
+![外部URL画像](https://github.githubassets.com/assets/GitHub-Mark-ea2971cee799.png)
+
 
 テーブルを作る
 
