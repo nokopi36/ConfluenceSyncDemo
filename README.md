@@ -109,6 +109,29 @@ python scripts/sync_to_confluence.py
 
 複雑なMarkdown構文の場合、`scripts/sync_to_confluence.py` の変換ロジックをカスタマイズしてください。
 
+### frontmatterが正しく認識されない
+
+frontmatterを使用する場合は、以下の点に注意してください：
+
+- frontmatterは**ファイルの先頭**に配置する必要があります
+- `---` で囲まれた部分がfrontmatterとして認識されます
+- 本文中で水平線（`---`）を使う場合は、必ずfrontmatterを先頭に配置するか、frontmatterを使わない場合は本文の最初の行を `---` 以外で始めてください
+
+**推奨される構造:**
+```markdown
+---
+confluence_page_id: 123456789
+---
+
+# タイトル
+
+本文
+
+---
+
+別のセクション  ← この水平線は問題なく処理されます
+```
+
 ### GitHub Actionsのログを確認
 
 1. リポジトリの「Actions」タブを開く
