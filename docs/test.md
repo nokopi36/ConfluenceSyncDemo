@@ -1,8 +1,7 @@
 ---
-confluence_page_id: 1617395903      # 既存ページID（更新ターゲット）
-confluence_space_key: DOCS       # 念のため指定（更新PUTにも含める）
-confluence_title: "README"       # 未指定ならファイル名をタイトルに
+confluence_title: "Github自動同期テスト"    # ページタイトル（オプション、未指定時はファイル名）
 ---
+
 テスト用のマークダウン
 
 テストドキュメント

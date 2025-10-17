@@ -1,178 +1,40 @@
-#name: "Confluecne Publisher"
-#
-## 動くきっかけ(push のタイミングで動作)
-#on:
-#  workflow_dispatch:  # 画面で実行ボタン押下
-#  push:
-#    branches:
-#      - main
-#
-## 動かす内容
-#jobs:
-#  publish:
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Checkout code
-#        uses: actions/checkout@v4
-#
-#
-#      - name: Publish Markdown to Confluence5
-#        uses: markdown-confluence/publish-action@main
-#        with:
-#          confluenceBaseUrl: ${{ secrets.CONFLUENCE_BASE_URL }}
-#          # 親ページのID (子ページとして作成するため)
-#          confluenceParentId: ${{ secrets.CONFLUENCE_PARENT_ID }}
-#          # <ログインユーザ (メールアドレス)>
-#          atlassianUserName: ${{ secrets.CONFLUENCE_USER_NAME_SECRET }}
-#          # <Confluence の API キー>
-#          atlassianApiToken: ${{ secrets.CONFLUENCE_API_TOKEN_SECRET }}
-#          # <md ファイルを置いているディレクトリ>
-#          contentRoot: docs
-#          # <contentRoot のディレクトリのうち、どのディレクトリの部分かを指定>
-#          folderToPublish: .
+name: "Confluence Publisher"
 
-name: "Sync Markdown to Confluence"
-
+# 動くきっかけ(push のタイミングで動作)
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # 画面で実行ボタン押下
   push:
-    branches: [ main ]
+    branches:
+      - main
     paths:
-      - "docs/**/*.md"
+      - 'docs/**/*.md'
+      - 'scripts/sync_to_confluence.py'
+      - '.github/workflows/confluence.yml'
 
-permissions:
-  contents: read
-
-concurrency:
-  group: confluence-sync-${{ github.ref }}
-  cancel-in-progress: false
-
+# 動かす内容
 jobs:
-  sync:
-    # DC/社内のみなら self-hosted を推奨
+  publish:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install pandoc & jq
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y pandoc jq
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
 
-      - name: Detect changed Markdown
-        id: changed
+      - name: Install dependencies
         run: |
-          set -euo pipefail
-          git fetch --depth=2 origin ${{ github.ref }}
-          CHANGED=$(git diff --name-only HEAD~1 HEAD | grep -E '^docs/.*\.md$' || true)
-          echo "files<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$CHANGED" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          pip install -r requirements.txt
 
-      - name: Publish to Confluence
-        if: steps.changed.outputs.files != ''
+      - name: Sync Markdown to Confluence
         env:
-          # ▼ Cloud用（設定していればこちらが使われる）
           CONFLUENCE_BASE_URL: ${{ secrets.CONFLUENCE_BASE_URL }}
-          CONFLUENCE_USER_EMAIL: ${{ secrets.CONFLUENCE_USER_NAME_SECRET }}
+          CONFLUENCE_USER_NAME: ${{ secrets.CONFLUENCE_USER_NAME_SECRET }}
           CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN_SECRET }}
-
-          # ▼ DC/Server用（Cloud未設定のときに使う）
-          DC_CONFLUENCE_BASE_URL: ${{ secrets.CONFLUENCE_BASE_URL }}
-          DC_PAT: ${{ secrets.CONFLUENCE_API_TOKEN_SECRET }}
+          CONFLUENCE_PARENT_ID: ${{ secrets.CONFLUENCE_PARENT_ID }}
+          CONFLUENCE_SPACE_KEY: ${{ secrets.CONFLUENCE_SPACE_KEY || 'DOCS' }}
         run: |
-          set -euo pipefail
-
-          publish_one () {
-            local MD="$1"
-
-            # ---- Front Matter抽出 ----
-            FM=$(awk 'BEGIN{on=0} /^---[[:space:]]*$/{on++; if(on==1){next} if(on==2){exit}} on==1{print}' "$MD" || true)
-            if [ -z "$FM" ]; then
-              echo "::warning::No front matter in $MD. Skipped."
-              return
-            fi
-            # 引用符を除去して安全に取り出し
-            PAGE_ID=$(printf "%s" "$FM" | grep -E '^confluence_page_id:'    | sed 's/.*:[[:space:]]*//' | tr -d '"')
-            SPACE_KEY=$(printf "%s" "$FM" | grep -E '^confluence_space_key:' | sed 's/.*:[[:space:]]*//' | tr -d '"')
-            TITLE=$(printf "%s" "$FM" | grep -E '^confluence_title:'       | sed 's/.*:[[:space:]]*//' | tr -d '"')
-            [ -z "${TITLE:-}" ] && TITLE=$(basename "$MD" .md)
-            if [ -z "${PAGE_ID:-}" ]; then
-              echo "::error ::confluence_page_id missing in $MD"
-              exit 1
-            fi
-
-            # ---- 本文（Front Matter除去）----
-            BODY_MD=$(mktemp)
-            awk 'BEGIN{on=0} /^---[[:space:]]*$/{on++; next} on<2{next} {print}' "$MD" > "$BODY_MD"
-
-            # ---- Markdown → HTML ----
-            HTML_FILE=$(mktemp --suffix=.html)
-            pandoc "$BODY_MD" -f gfm -t html5 -o "$HTML_FILE"
-
-            # ---- HTMLをJSON文字列に（Python不要）----
-            CONTENT=$(jq -Rs . < "$HTML_FILE")
-
-            if [ -n "${CONFLUENCE_BASE_URL:-}" ]; then
-              # ===== Cloud: Basic (email:api_token) =====
-              AUTH=$(printf "%s:%s" "$CONFLUENCE_USER_EMAIL" "$CONFLUENCE_API_TOKEN" | base64 -w0)
-
-              CURR=$(curl -sS -H "Authorization: Basic $AUTH" \
-                           "$CONFLUENCE_BASE_URL/rest/api/content/$PAGE_ID?expand=version")
-              VER=$(echo "$CURR" | jq -r '.version.number')
-              NEXT=$((VER+1))
-
-              RESP=$(curl -sS -X PUT \
-                -H "Authorization: Basic $AUTH" \
-                -H "Content-Type: application/json" \
-                -d "{
-                  \"id\": \"$PAGE_ID\",
-                  \"type\": \"page\",
-                  \"title\": \"$TITLE\",
-                  \"space\": { \"key\": \"$SPACE_KEY\" },
-                  \"body\": { \"storage\": { \"value\": $CONTENT, \"representation\": \"storage\" } },
-                  \"version\": { \"number\": $NEXT }
-                }" \
-                "$CONFLUENCE_BASE_URL/rest/api/content/$PAGE_ID")
-
-            elif [ -n "${DC_CONFLUENCE_BASE_URL:-}" ]; then
-              # ===== Data Center / Server: Bearer PAT =====
-              CURR=$(curl -sS -H "Authorization: Bearer $DC_PAT" \
-                           "$DC_CONFLUENCE_BASE_URL/rest/api/content/$PAGE_ID?expand=version")
-              VER=$(echo "$CURR" | jq -r '.version.number')
-              NEXT=$((VER+1))
-
-              RESP=$(curl -sS -X PUT \
-                -H "Authorization: Bearer $DC_PAT" \
-                -H "Content-Type: application/json" \
-                -d "{
-                  \"id\": \"$PAGE_ID\",
-                  \"type\": \"page\",
-                  \"title\": \"$TITLE\",
-                  \"space\": { \"key\": \"$SPACE_KEY\" },
-                  \"body\": { \"storage\": { \"value\": $CONTENT, \"representation\": \"storage\" } },
-                  \"version\": { \"number\": $NEXT }
-                }" \
-                "$DC_CONFLUENCE_BASE_URL/rest/api/content/$PAGE_ID")
-            else
-              echo "::error ::No Confluence base URL configured."
-              exit 1
-            fi
-
-            # ---- エラーチェック ----
-            if echo "$RESP" | jq -e 'has("statusCode") and .statusCode >= 400' >/dev/null 2>&1; then
-              echo "::error ::Confluence API error: $(echo "$RESP" | jq -r '.message // .statusCode')"
-              echo "$RESP" | jq .
-              exit 1
-            fi
-            echo "Updated $PAGE_ID ($TITLE)"
-          }
-
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            publish_one "$f"
-          done << 'EOF'
-          ${{ steps.changed.outputs.files }}
-          EOF
+          python scripts/sync_to_confluence.py
