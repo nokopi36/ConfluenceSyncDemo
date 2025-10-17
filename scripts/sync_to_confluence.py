@@ -73,7 +73,7 @@ def parse_frontmatter(content: str) -> Tuple[Dict[str, str], str]:
     return {}, content
 
 
-def markdown_to_confluence_storage(md_content: str) -> str:
+def markdown_to_confluence_storage(md_content: str, md_file_path: Optional[Path] = None, page_id: Optional[str] = None, images_to_upload: Optional[list] = None) -> str:
     """
     MarkdownをConfluenceのStorage形式に変換
 
@@ -81,11 +81,45 @@ def markdown_to_confluence_storage(md_content: str) -> str:
 
     Args:
         md_content: Markdown形式のコンテンツ
+        md_file_path: マークダウンファイルのパス（画像の相対パス解決用）
+        page_id: ページID（画像アップロード用）
+        images_to_upload: アップロードする画像のリスト（出力用）
 
     Returns:
         Confluence Storage形式のコンテンツ
     """
     content = md_content
+
+    # 画像変換（![alt](url) 形式）
+    def image_replace(match):
+        alt_text = match.group(1)
+        image_path = match.group(2)
+
+        # 外部URLの場合
+        if image_path.startswith(('http://', 'https://')):
+            return f'<ac:image><ri:url ri:value="{image_path}" /></ac:image>'
+
+        # ローカル画像の場合
+        if md_file_path and images_to_upload is not None:
+            # 相対パスを解決
+            if not Path(image_path).is_absolute():
+                image_full_path = (md_file_path.parent / image_path).resolve()
+            else:
+                image_full_path = Path(image_path)
+
+            if image_full_path.exists():
+                images_to_upload.append(image_full_path)
+                filename = image_full_path.name
+                # 添付ファイルとして参照
+                return f'<ac:image><ri:attachment ri:filename="{filename}" /></ac:image>'
+            else:
+                print(f"   ⚠️  Image not found: {image_path}")
+                return f'<p><em>Image not found: {image_path}</em></p>'
+
+        # ページIDがない場合は警告
+        return f'<p><em>Image: {image_path}</em></p>'
+
+    content = re.sub(r'!\[(.*?)\]\((.*?)\)', image_replace, content)
 
     # 見出し変換
     content = re.sub(r'^######\s+(.*?)$', r'<h6>\1</h6>', content, flags=re.MULTILINE)
@@ -155,6 +189,57 @@ def markdown_to_confluence_storage(md_content: str) -> str:
     content = '\n'.join(formatted_paragraphs)
 
     return content
+
+
+def upload_attachment(page_id: str, file_path: Path) -> Optional[str]:
+    """
+    ページに添付ファイルをアップロード
+
+    Args:
+        page_id: ページID
+        file_path: アップロードするファイルのパス
+
+    Returns:
+        添付ファイル名、失敗した場合はNone
+    """
+    url = f"{BASE_URL}/rest/api/content/{page_id}/child/attachment"
+
+    try:
+        # 既存の添付ファイルを確認
+        response = requests.get(url, auth=auth, headers={'Accept': 'application/json'})
+
+        filename = file_path.name
+        existing_attachment = None
+
+        if response.status_code == 200:
+            attachments = response.json().get('results', [])
+            for attachment in attachments:
+                if attachment['title'] == filename:
+                    existing_attachment = attachment
+                    break
+
+        # ファイルをアップロード
+        with open(file_path, 'rb') as f:
+            files = {'file': (filename, f, 'application/octet-stream')}
+            upload_headers = {'X-Atlassian-Token': 'no-check'}
+
+            if existing_attachment:
+                # 既存の添付ファイルを更新
+                attachment_url = f"{BASE_URL}/rest/api/content/{page_id}/child/attachment/{existing_attachment['id']}/data"
+                response = requests.post(attachment_url, auth=auth, headers=upload_headers, files=files)
+            else:
+                # 新規アップロード
+                response = requests.post(url, auth=auth, headers=upload_headers, files=files)
+
+            if response.status_code in [200, 201]:
+                print(f"   ✅ Uploaded attachment: {filename}")
+                return filename
+            else:
+                print(f"   ⚠️  Failed to upload {filename}: {response.status_code}")
+                return None
+    except Exception as e:
+        print(f"   ❌ Error uploading {file_path}: {str(e)}")
+        return None
 
 
 def convert_table(table_lines: list) -> str:
@@ -348,8 +433,11 @@ def process_markdown_file(md_file: Path) -> bool:
     # タイトルの決定
     title = frontmatter.get('confluence_title', md_file.stem)
 
+    # 画像収集用のリスト
+    images_to_upload = []
+
     # Confluenceのストレージ形式に変換
-    confluence_content = markdown_to_confluence_storage(body)
+    confluence_content = markdown_to_confluence_storage(body, md_file, None, images_to_upload)
 
     # ページIDが指定されている場合は更新、なければ新規作成
     if 'confluence_page_id' in frontmatter:
@@ -357,12 +445,24 @@ def process_markdown_file(md_file: Path) -> bool:
         existing_page = get_page_by_id(page_id)
 
         if existing_page:
+            # 画像を含む場合は再変換（ページIDを使用）
+            if images_to_upload:
+                images_to_upload = []
+                confluence_content = markdown_to_confluence_storage(body, md_file, page_id, images_to_upload)
+
             result = update_page(
                 page_id,
                 title,
                 confluence_content,
                 existing_page['version']['number']
             )
+
+            # 画像をアップロード
+            if result and images_to_upload:
+                print(f"   📎 Uploading {len(images_to_upload)} image(s)...")
+                for image_path in images_to_upload:
+                    upload_attachment(page_id, image_path)
+
             return result is not None
         else:
             print(f"⚠️  Page ID {page_id} not found, skipping...")
@@ -375,6 +475,19 @@ def process_markdown_file(md_file: Path) -> bool:
         result = create_page(space_key, title, confluence_content, parent_id)
 
         if result:
+            page_id = result['id']
+
+            # 画像がある場合はアップロードして再変換
+            if images_to_upload:
+                print(f"   📎 Uploading {len(images_to_upload)} image(s)...")
+                for image_path in images_to_upload:
+                    upload_attachment(page_id, image_path)
+
+                # 画像参照を含むコンテンツで再変換して更新
+                images_to_upload = []
+                confluence_content = markdown_to_confluence_storage(body, md_file, page_id, images_to_upload)
+                update_page(page_id, title, confluence_content, result['version']['number'])
+
             # 作成されたページIDをfrontmatterに追加する提案
             print(f"💡 Tip: Add the following to {md_file.name} frontmatter to enable updates:")
             print(f"   confluence_page_id: {result['id']}")
