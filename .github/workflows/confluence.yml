@@ -1,0 +1,32 @@
+name: "Confluecne Publisher"
+
+# 動くきっかけ(push のタイミングで動作)
+on:
+  workflow_dispatch:  # 画面で実行ボタン押下
+  push:
+    branches:
+      - main
+
+# 動かす内容
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+
+      - name: Publish Markdown to Confluence5
+        uses: markdown-confluence/publish-action@main
+        with:
+          confluenceBaseUrl: ${{ secrets.CONFLUENCE_BASE_URL }}
+          # 親ページのID (子ページとして作成するため)
+          confluenceParentId: ${{ secrets.CONFLUENCE_PARENT_ID }}
+          # <ログインユーザ (メールアドレス)>
+          atlassianUserName: ${{ secrets.CONFLUENCE_USER_NAME_SECRET }}
+          # <Confluence の API キー>
+          atlassianApiToken: ${{ secrets.CONFLUENCE_API_TOKEN_SECRET }}
+          # <md ファイルを置いているディレクトリ>
+          contentRoot: docs
+          # <contentRoot のディレクトリのうち、どのディレクトリの部分かを指定>
+          folderToPublish: .
