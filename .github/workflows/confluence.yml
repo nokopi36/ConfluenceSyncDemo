@@ -8,8 +8,6 @@ on:
       - main
     paths:
       - 'docs/**/*.md'
-      - 'scripts/sync_to_confluence.py'
-      - '.github/workflows/confluence.yml'
 
 # 動かす内容
 jobs:
