@@ -54,10 +54,9 @@ confluence_title: "ページタイトル"    # ページタイトル（オプシ
 
 以下のタイミングで自動的に同期されます：
 
-- `main` ブランチへのpush時
-- `docs/**/*.md` ファイルの変更時
-- `scripts/sync_to_confluence.py` の変更時
-- `.github/workflows/confluence.yml` の変更時
+- `main` ブランチへのpush時に `docs/**/*.md` ファイルが変更された場合
+
+**注意**: `docs/` ディレクトリ配下のマークダウンファイル（`.md`）のみが監視対象です。他のファイル（`README.md`、`scripts/`、ワークフローファイルなど）の変更では自動実行されません。
 
 ### 手動実行
 
