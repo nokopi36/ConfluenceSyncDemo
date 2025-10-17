@@ -312,6 +312,45 @@ def get_page_by_id(page_id: str) -> Optional[dict]:
         return None
 
 
+def search_page_by_title(space_key: str, title: str) -> Optional[dict]:
+    """
+    タイトルとスペースキーでページを検索
+
+    Args:
+        space_key: Confluenceスペースキー
+        title: ページタイトル
+
+    Returns:
+        ページ情報の辞書、見つからない場合はNone
+    """
+    url = f"{BASE_URL}/rest/api/content"
+    params = {
+        'spaceKey': space_key,
+        'title': title,
+        'type': 'page',
+        'status': 'current',
+        'expand': 'version'
+    }
+
+    try:
+        response = requests.get(url, auth=auth, headers=headers, params=params)
+
+        if response.status_code == 200:
+            results = response.json().get('results', [])
+            if results:
+                # タイトルが完全一致するページを返す
+                for page in results:
+                    if page['title'] == title:
+                        return page
+            return None
+        else:
+            print(f"⚠️  Warning: Failed to search page '{title}': {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"❌ Error searching page '{title}': {str(e)}")
+        return None
+
+
 def create_page(space_key: str, title: str, content: str, parent_id: Optional[str] = None) -> Optional[dict]:
     """
     新規ページを作成
@@ -468,31 +507,59 @@ def process_markdown_file(md_file: Path) -> bool:
             print(f"⚠️  Page ID {page_id} not found, skipping...")
             return False
     else:
-        # 新規作成
+        # ページIDが指定されていない場合、タイトルで検索
         space_key = frontmatter.get('confluence_space_key', SPACE_KEY)
         parent_id = frontmatter.get('confluence_parent_id', PARENT_ID)
 
-        result = create_page(space_key, title, confluence_content, parent_id)
+        # タイトルで既存ページを検索
+        existing_page = search_page_by_title(space_key, title)
 
-        if result:
-            page_id = result['id']
+        if existing_page:
+            # 既存ページが見つかった場合は更新
+            page_id = existing_page['id']
+            print(f"   🔍 Found existing page with title '{title}' (ID: {page_id})")
 
-            # 画像がある場合はアップロードして再変換
+            # 画像を含む場合は再変換（ページIDを使用）
             if images_to_upload:
+                images_to_upload = []
+                confluence_content = markdown_to_confluence_storage(body, md_file, page_id, images_to_upload)
+
+            result = update_page(
+                page_id,
+                title,
+                confluence_content,
+                existing_page['version']['number']
+            )
+
+            # 画像をアップロード
+            if result and images_to_upload:
                 print(f"   📎 Uploading {len(images_to_upload)} image(s)...")
                 for image_path in images_to_upload:
                     upload_attachment(page_id, image_path)
 
-                # 画像参照を含むコンテンツで再変換して更新
-                images_to_upload = []
-                confluence_content = markdown_to_confluence_storage(body, md_file, page_id, images_to_upload)
-                update_page(page_id, title, confluence_content, result['version']['number'])
+            return result is not None
+        else:
+            # 既存ページが見つからない場合は新規作成
+            result = create_page(space_key, title, confluence_content, parent_id)
 
-            # 作成されたページIDをfrontmatterに追加する提案
-            print(f"💡 Tip: Add the following to {md_file.name} frontmatter to enable updates:")
-            print(f"   confluence_page_id: {result['id']}")
+            if result:
+                page_id = result['id']
 
-        return result is not None
+                # 画像がある場合はアップロードして再変換
+                if images_to_upload:
+                    print(f"   📎 Uploading {len(images_to_upload)} image(s)...")
+                    for image_path in images_to_upload:
+                        upload_attachment(page_id, image_path)
+
+                    # 画像参照を含むコンテンツで再変換して更新
+                    images_to_upload = []
+                    confluence_content = markdown_to_confluence_storage(body, md_file, page_id, images_to_upload)
+                    update_page(page_id, title, confluence_content, result['version']['number'])
+
+                # 作成されたページIDをfrontmatterに追加する提案（オプション）
+                print(f"💡 Tip: You can add 'confluence_page_id: {result['id']}' to frontmatter (optional)")
+
+            return result is not None
 
 
 def process_markdown_files(docs_dir: str) -> Tuple[int, int]:
