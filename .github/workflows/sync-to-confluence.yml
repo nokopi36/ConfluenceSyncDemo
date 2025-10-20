@@ -25,7 +25,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r tools/confluence-sync/requirements.txt
+          pip install -r tools/git2confluence/requirements.txt
 
       - name: Sync Markdown to Confluence
         env:
@@ -35,4 +35,4 @@ jobs:
           CONFLUENCE_PARENT_ID: ${{ secrets.CONFLUENCE_PARENT_ID }}
           CONFLUENCE_SPACE_KEY: ${{ secrets.CONFLUENCE_SPACE_KEY || 'DOCS' }}
         run: |
-          python tools/confluence-sync/sync_to_confluence.py
+          python tools/git2confluence/sync_to_confluence.py
