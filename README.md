@@ -93,7 +93,7 @@ GitHub Actionsの画面から「Confluence Publisher」ワークフローを選�
 
 ```bash
 # 依存関係のインストール
-pip install -r requirements.txt
+pip install -r tools/confluence-sync/requirements.txt
 
 # 環境変数を設定
 export CONFLUENCE_BASE_URL="https://your-domain.atlassian.net/wiki"
@@ -103,14 +103,14 @@ export CONFLUENCE_PARENT_ID="123456789"  # オプション
 export CONFLUENCE_SPACE_KEY="DOCS"       # オプション
 
 # スクリプトの実行
-python scripts/sync_to_confluence.py
+python tools/confluence-sync/sync_to_confluence.py
 ```
 
 ## カスタマイズ
 
 ### Markdown変換のカスタマイズ
 
-`scripts/sync_to_confluence.py` の `markdown_to_confluence_storage()` 関数を編集することで、Markdownの変換方法をカスタマイズできます。
+`tools/confluence-sync/sync_to_confluence.py` の `markdown_to_confluence_storage()` 関数を編集することで、Markdownの変換方法をカスタマイズできます。
 
 現在サポートしている要素：
 - 見出し（h1-h6）
@@ -134,7 +134,7 @@ python scripts/sync_to_confluence.py
 
 ### Markdown変換がうまくいかない
 
-複雑なMarkdown構文の場合、`scripts/sync_to_confluence.py` の変換ロジックをカスタマイズしてください。
+複雑なMarkdown構文の場合、`tools/confluence-sync/sync_to_confluence.py` の変換ロジックをカスタマイズしてください。
 
 ### frontmatterが正しく認識されない
 
