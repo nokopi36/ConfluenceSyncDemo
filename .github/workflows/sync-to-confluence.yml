@@ -1,4 +1,4 @@
-name: "Confluence Publisher"
+name: "Sync to Confluence"
 
 # 動くきっかけ(push のタイミングで動作)
 on:
